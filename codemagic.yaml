@@ -1,6 +1,6 @@
 workflows:
   telegram-ios-bazel:
-    name: Telegram iOS (Bazel Build with App Preview)
+    name: Telegram iOS (Bazel Build)
     instance_type: mac_mini_m1
 
     environment:
@@ -12,7 +12,6 @@ workflows:
     triggering:
       events:
         - push
-        - manual
       branch_patterns:
         - pattern: main
           include: true
@@ -35,7 +34,6 @@ workflows:
           export COMMIT_COUNT=$(git rev-list --count HEAD)
           export COMMIT_COUNT=$(($COMMIT_COUNT + $BUILD_NUMBER_OFFSET))
           export BUILD_NUMBER="$COMMIT_COUNT"
-
           echo "APP_VERSION=$APP_VERSION" >> $CM_ENV
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
 
@@ -53,16 +51,14 @@ workflows:
         script: |
           mkdir -p build/artifacts
           cp bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa build/artifacts/Telegram.ipa || true
-
           mkdir -p build/DSYMs
           cp -R bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/*.dSYM build/DSYMs/ || true
           zip -r build/artifacts/Telegram.DSYMs.zip build/DSYMs > /dev/null
 
-      - name: Collect .app for preview
+      - name: Collect .app for App Preview
         script: |
           mkdir -p build/AppBundle
           APP_PATH=$(find bazel-out -type d -name '*.app' | head -n 1)
-
           if [ -n "$APP_PATH" ]; then
             echo "Found .app at: $APP_PATH"
             cp -R "$APP_PATH" build/AppBundle/Telegram.app
@@ -75,9 +71,3 @@ workflows:
       - build/artifacts/Telegram.ipa
       - build/artifacts/Telegram.DSYMs.zip
       - build/artifacts/Telegram.app.zip
-
-    publishing:
-      app_preview:
-        title: Telegram
-        email: your-email@example.com
-        binary: build/artifacts/Telegram.app.zip

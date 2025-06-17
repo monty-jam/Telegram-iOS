@@ -1,0 +1,37 @@
+workflows:
+  telegram-ios-bazel:
+    name: Telegram iOS (Bazel)
+    instance_type: mac_mini_m1
+    environment:
+      vars:
+        BAZEL_BUILD_TARGET: "//Telegram:TelegramApp"
+        BAZEL_CPU: ios_sim_arm64
+      xcode: latest
+      node: latest
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: master
+          include: true
+    scripts:
+      - name: Install tools
+        script: |
+          brew install bazelisk cmake ninja
+      - name: Create empty configuration-repository
+        script: |
+          mkdir -p build-input/configuration-repository
+      - name: Build with Bazel
+        script: |
+          export DEVELOPER_DIR=$(xcode-select -p)
+          bazelisk build $BAZEL_BUILD_TARGET \
+            --apple_platform_type=ios \
+            --cpu=$BAZEL_CPU
+      - name: Package .app
+        script: |
+          mkdir -p output
+          APP_PATH=$(find bazel-out -type d -name "*.app" | head -n 1)
+          echo "App found at $APP_PATH"
+          zip -r output/Telegram.app.zip "$APP_PATH"
+    artifacts:
+      - output/Telegram.app.zip

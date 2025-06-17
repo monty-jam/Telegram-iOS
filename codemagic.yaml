@@ -1,37 +1,83 @@
 workflows:
   telegram-ios-bazel:
-    name: Telegram iOS (Bazel)
+    name: Telegram iOS (Bazel Build with App Preview)
     instance_type: mac_mini_m1
+
     environment:
       vars:
-        BAZEL_BUILD_TARGET: "//Telegram:TelegramApp"
-        BAZEL_CPU: ios_sim_arm64
+        SOURCE_DIR: /Users/builder/clone
+        BAZEL_USER_ROOT: /private/var/tmp/_bazel_containerhost
       xcode: latest
-      node: latest
+
     triggering:
       events:
         - push
+        - manual
       branch_patterns:
-        - pattern: master
+        - pattern: main
           include: true
+
     scripts:
-      - name: Install tools
+      - name: Install dependencies
         script: |
-          brew install bazelisk cmake ninja
-      - name: Create empty configuration-repository
-        script: |
+          brew install bazelisk cmake ninja python@3.11
           mkdir -p build-input/configuration-repository
-      - name: Build with Bazel
+          touch build-input/configuration-repository/WORKSPACE
+
+      - name: Import fake certificates
         script: |
-          export DEVELOPER_DIR=$(xcode-select -p)
-          bazelisk build $BAZEL_BUILD_TARGET \
-            --apple_platform_type=ios \
-            --cpu=$BAZEL_CPU
-      - name: Package .app
+          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
+      - name: Compute version & build number
         script: |
-          mkdir -p output
-          APP_PATH=$(find bazel-out -type d -name "*.app" | head -n 1)
-          echo "App found at $APP_PATH"
-          zip -r output/Telegram.app.zip "$APP_PATH"
+          BUILD_NUMBER_OFFSET=$(cat build_number_offset)
+          export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["app"])')
+          export COMMIT_COUNT=$(git rev-list --count HEAD)
+          export COMMIT_COUNT=$(($COMMIT_COUNT + $BUILD_NUMBER_OFFSET))
+          export BUILD_NUMBER="$COMMIT_COUNT"
+
+          echo "APP_VERSION=$APP_VERSION" >> $CM_ENV
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
+
+      - name: Build IPA with Bazel
+        script: |
+          python3 -u build-system/Make/Make.py \
+            --bazelUserRoot="$BAZEL_USER_ROOT" \
+            build \
+            --configurationPath="build-system/appstore-configuration.json" \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --configuration=release_arm64 \
+            --buildNumber="$BUILD_NUMBER"
+
+      - name: Collect IPA and DSYM
+        script: |
+          mkdir -p build/artifacts
+          cp bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa build/artifacts/Telegram.ipa || true
+
+          mkdir -p build/DSYMs
+          cp -R bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/*.dSYM build/DSYMs/ || true
+          zip -r build/artifacts/Telegram.DSYMs.zip build/DSYMs > /dev/null
+
+      - name: Collect .app for preview
+        script: |
+          mkdir -p build/AppBundle
+          APP_PATH=$(find bazel-out -type d -name '*.app' | head -n 1)
+
+          if [ -n "$APP_PATH" ]; then
+            echo "Found .app at: $APP_PATH"
+            cp -R "$APP_PATH" build/AppBundle/Telegram.app
+            zip -r build/artifacts/Telegram.app.zip build/AppBundle/Telegram.app > /dev/null
+          else
+            echo "⚠️ No .app found"
+          fi
+
     artifacts:
-      - output/Telegram.app.zip
+      - build/artifacts/Telegram.ipa
+      - build/artifacts/Telegram.DSYMs.zip
+      - build/artifacts/Telegram.app.zip
+
+    publishing:
+      app_preview:
+        title: Telegram
+        email: your-email@example.com
+        binary: build/artifacts/Telegram.app.zip
